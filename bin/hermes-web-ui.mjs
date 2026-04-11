@@ -57,10 +57,16 @@ async function proxyRequest(req, res, reqPath) {
   delete headers['referer']
 
   try {
+    const hasBody = req.method !== 'GET' && req.method !== 'HEAD'
+    const bodyChunks = hasBody ? [] : null
+    if (hasBody) {
+      for await (const chunk of req) bodyChunks.push(chunk)
+    }
+
     const apiRes = await fetch(url, {
       method: req.method,
       headers,
-      body: req.method !== 'GET' && req.method !== 'HEAD' ? req : undefined,
+      body: bodyChunks ? Buffer.concat(bodyChunks) : undefined,
     })
 
     const resHeaders = {}
