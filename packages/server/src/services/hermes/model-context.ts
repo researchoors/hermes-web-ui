@@ -67,6 +67,50 @@ function getDefaultModel(profileDir: string): string | null {
   }
 }
 
+/**
+ * Extract the default model name from config.yaml, handling cases where
+ * other keys (api_key, base_url, etc.) appear before "default" under "model:".
+ * The original getDefaultModel regex assumes "default" is the first child key,
+ * which fails when api_key/base_url come first.
+ */
+function getDefaultModelRobust(profileDir: string): string | null {
+  const configPath = join(profileDir, 'config.yaml')
+  if (!existsSync(configPath)) return null
+  try {
+    const content = readFileSync(configPath, 'utf-8')
+    // Extract the entire model: block, then search for default: within it
+    const blockMatch = content.match(/^model:\s*\n([\s\S]*?)(?=^\w)/m)
+    if (!blockMatch) return null
+    const modelBlock = blockMatch[1]
+    const defaultMatch = modelBlock.match(/default:\s*(.+)$/m)
+    return defaultMatch ? defaultMatch[1].trim() : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Read model.context_length from config.yaml as a fallback when
+ * models_dev_cache.json is unavailable or doesn't contain the model.
+ * This matches the hermes-agent behavior where config.yaml's
+ * model.context_length is the highest-priority override.
+ */
+function getConfigContextLength(profileDir: string): number | null {
+  const configPath = join(profileDir, 'config.yaml')
+  if (!existsSync(configPath)) return null
+  try {
+    const content = readFileSync(configPath, 'utf-8')
+    const match = content.match(/context_length:\s*(\d+)/)
+    if (match) {
+      const val = parseInt(match[1], 10)
+      if (Number.isFinite(val) && val > 0) return val
+    }
+  } catch {
+    // ignore
+  }
+  return null
+}
+
 // --- Context lookup ---
 
 function lookupContextFromCache(modelName: string): number | null {
@@ -95,12 +139,21 @@ function lookupContextFromCache(modelName: string): number | null {
 
 /**
  * Get the context length for the current profile's default model.
- * Results are cached in memory (5min TTL) and invalidated by file mtime.
+ * Resolution order:
+ *   1. models_dev_cache.json (existing behavior)
+ *   2. config.yaml model.context_length (matches hermes-agent priority)
+ *   3. DEFAULT_CONTEXT_LENGTH (200K hardcoded fallback)
  */
 export function getModelContextLength(profile?: string): number {
   const profileDir = getProfileDir(profile)
-  const model = getDefaultModel(profileDir)
+  const model = getDefaultModelRobust(profileDir) || getDefaultModel(profileDir)
   if (!model) return DEFAULT_CONTEXT_LENGTH
 
-  return lookupContextFromCache(model) || DEFAULT_CONTEXT_LENGTH
+  const cached = lookupContextFromCache(model)
+  if (cached) return cached
+
+  const configCtx = getConfigContextLength(profileDir)
+  if (configCtx && configCtx > 0) return configCtx
+
+  return DEFAULT_CONTEXT_LENGTH
 }
