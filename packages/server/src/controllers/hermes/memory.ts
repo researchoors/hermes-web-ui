@@ -1,4 +1,4 @@
-import { writeFile } from 'fs/promises'
+import { writeFile, existsSync } from 'fs/promises'
 import { join } from 'path'
 import { safeReadFile, safeStat, getHermesDir } from '../../services/config-helpers'
 
@@ -7,10 +7,15 @@ export async function get(ctx: any) {
   const memoryPath = join(hd, 'memories', 'MEMORY.md')
   const userPath = join(hd, 'memories', 'USER.md')
   const soulPath = join(hd, 'SOUL.md')
-  const [memory, user, soul, memoryStat, userStat, soulStat] = await Promise.all([
-    safeReadFile(memoryPath), safeReadFile(userPath), safeReadFile(soulPath),
-    safeStat(memoryPath), safeStat(userPath), safeStat(soulPath),
+  const personaPath = join(hd, 'persona.md')
+  let [memory, user, soul, persona, memoryStat, userStat, soulStat, personaStat] = await Promise.all([
+    safeReadFile(memoryPath), safeReadFile(userPath), safeReadFile(soulPath), safeReadFile(personaPath),
+    safeStat(memoryPath), safeStat(userPath), safeStat(soulPath), safeStat(personaPath),
   ])
+  if (!soul && persona) {
+    soul = persona
+    soulStat = personaStat
+  }
   ctx.body = {
     memory: memory || '', user: user || '', soul: soul || '',
     memory_mtime: memoryStat?.mtime || null, user_mtime: userStat?.mtime || null, soul_mtime: soulStat?.mtime || null,
@@ -38,6 +43,12 @@ export async function save(ctx: any) {
   }
   try {
     await writeFile(filePath, content, 'utf-8')
+    if (section === 'soul') {
+      const personaPath = join(getHermesDir(), 'persona.md')
+      if (existsSync(personaPath)) {
+        await writeFile(personaPath, content, 'utf-8')
+      }
+    }
     ctx.body = { success: true }
   } catch (err: any) {
     ctx.status = 500
